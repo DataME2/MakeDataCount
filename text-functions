@@ -1,0 +1,237 @@
+# ================================================================================
+# TEXT PROCESSING HELPER FUNCTIONS
+# ================================================================================
+
+def normalize_string(text: str) -> str:
+    """Normalize text for better pattern matching"""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    
+    # Unicode normalization
+    text = unicodedata.normalize('NFKC', text)
+    # Normalize line breaks and spaces
+    text = re.sub(r'\r\n?', ' ', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = text.strip()
+    # Fix hyphenated words split across lines
+    text = re.sub(r'-\s+', '', text)
+    # Fix common OCR errors in DOIs
+    text = re.sub(r'10\.\s*(\d+)', r'10.\1', text)
+    text = re.sub(r'10\.5O61', '10.5061', text)
+    text = re.sub(r'10\.SO61', '10.5061', text)
+    return text
+
+import unicodedata, re
+
+######Part of _sanitize_unicode function ##################################
+
+_DROP = dict.fromkeys(map(ord, [
+    '\u200b', '\u200c', '\u200d', '\u2060',  # zero-widths / word-joiner
+    '\ufeff',                                # BOM
+    '\u00ad',                                # soft hyphen
+    '\u202a','\u202b','\u202c','\u202d','\u202e',  # bidi marks
+    '\u200e','\u200f',                       # LRM/RLM
+]))
+_HYPHENS = {
+    ord('\u2010'): '-', ord('\u2011'): '-', ord('\u2012'): '-',
+    ord('\u2013'): '-', ord('\u2014'): '-', ord('\u2212'): '-',
+}
+_CTRL = re.compile(r'[\u0000-\u001f\u007f]')  # control chars only
+
+def _sanitize_unicode(s: str) -> str:
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKC", s)
+    s = s.translate(_HYPHENS)      # unify dashes
+    s = s.translate(_DROP)         # drop zero-widths/soft hyphen/BOM/bidi
+    s = s.replace('\u00a0', ' ')   # nbsp -> space
+    s = _CTRL.sub('', s)           # remove control chars, KEEP spaces
+    # tidy spaces around slashes/dots that break DOIs/URLs when copied from PDFs
+    s = re.sub(r'\s*(/|\.)\s*', r'\1', s)
+    s = re.sub(r'[ \t]+', ' ', s)  # collapse multiple spaces
+    return s.strip()
+
+# Remove trailing junk end of a DOI by PDF extraction
+def _clean_doi(doi: str) -> str:
+    doi = doi.strip().rstrip('.,;:)]}>"\'')        # trim common trailing punct
+    # If a long alpha-only word is glued on the end, drop it
+    m = re.match(r'^(10\.\d{4,9}/.+?)([A-Za-z]{5,})$', doi)
+    if m:
+        doi = m.group(1)
+    return doi.lower()
+
+
+######Part of normalize_dataset_id ########################################
+DOI_PAT =  re.compile(r'10\.\d{4,9}/[^\s"\'<>)}\]]+', re.IGNORECASE)
+
+# Typical accessions. Note: removed bare "SRA" (too generic -> false positives)
+ACCESSION_RE = re.compile(
+    r'\b('
+    r'GSE|GSM|GDS|SRR|SRX|SRP|SRS|DRR|DRX|DRP|ERR|ERX|ERP|'
+    r'PRJNA|PRJEB|PRJDB|E\-MTAB|E\-GEOD|E\-MEXP|E\-PROT|E\-TABM|'
+    r'PXD|EMPIAR|EPI[_-]ISL|SAMN|SAMD|SAMEA|CP'
+    r')\d+[A-Z0-9._-]*\b',
+    re.IGNORECASE
+)
+
+def normalize_dataset_id(raw_id: str) -> str:
+    """Return a canonical dataset_id:
+       - Real DOIs -> https://doi.org/<lowercased-doi>
+       - Accessions -> UPPERCASE accession (no DOI-ification)
+       - Dryad/Zenodo/Figshare tokens -> canonical DOIs
+       - Else -> '' (reject)
+    """
+    if not raw_id or not raw_id.strip():
+        return ""
+
+    s = _sanitize_unicode(raw_id)
+    if not s:
+        return ""
+
+    # strip obvious trailing delimiters
+    s = s.strip().rstrip('.,;:!?)"]}').lstrip('(["{<')
+
+    # already a doi.org URL?
+    if s.lower().startswith(('https://doi.org/', 'http://doi.org/')):
+        tail = s.split('doi.org/', 1)[1]
+        return 'https://doi.org/' + _clean_doi(tail)
+
+    # bare DOI inside the string?
+    m = DOI_PAT.search(s)
+    if m:
+        return 'https://doi.org/' + _clean_doi(m.group(0))
+
+    # pure accessions
+    m = ACCESSION_RE.search(s)
+    if m:
+        return m.group(0).upper()
+
+    # repository tokens that need DOI construction
+    low = s.lower()
+
+    # dryad.XXXX (handles zero-width/soft-hyphen cases thanks to sanitizer)
+    if 'dryad.' in low:
+        m = re.search(r'dryad\.([a-z0-9.-]+)', low)
+        if m:
+            return f'https://doi.org/10.5061/dryad.{m.group(1)}'
+
+    if 'zenodo.' in low:
+        m = re.search(r'zenodo\.(\d+)', low)
+        if m:
+            return f'https://doi.org/10.5281/zenodo.{m.group(1)}'
+
+    if 'm9.figshare.' in low:
+        m = re.search(r'm9\.figshare\.([0-9]+(?:\.v[0-9]+)?)', low)
+        if m:
+            return f'https://doi.org/10.6084/m9.figshare.{m.group(1)}'
+
+    return "" # Return empty for unrecognized formats
+
+def reconstruct_split_citations(text: str) -> str:
+    """Fix split citations across lines"""
+    text = re.sub(r'10\.(\d+)/\s*\n\s*([A-Za-z0-9])', r'10.\1/\2', text)
+    text = re.sub(r'10\.\s*(\d+)\s*/\s*', r'10.\1/', text)
+    text = re.sub(r'10\.5O61', '10.5061', text)
+    text = re.sub(r'dryad\.\s+([a-z0-9]+)', r'dryad.\1', text)
+    return text
+
+
+def create_pattern_whitelist(labels_df):
+    """Create a whitelist of patterns from the training data"""
+    pattern_whitelist = set()
+    
+    for dataset_id in labels_df['dataset_id']:
+        if dataset_id.startswith('https://doi.org/'):
+            # Extract the part after the DOI prefix
+            doi_part = dataset_id[16:]
+            if '/' in doi_part:
+                prefix = doi_part.split('/')[0]
+                pattern_whitelist.add(prefix)
+            else:
+                pattern_whitelist.add(doi_part)
+        else:
+            # It's an accession number or other identifier
+            # Add the first part (before any dots) and the full identifier
+            parts = dataset_id.split('.')
+            pattern_whitelist.add(parts[0])
+            pattern_whitelist.add(dataset_id)
+    
+    return pattern_whitelist
+
+def should_include_candidate(candidate, pattern_whitelist):
+    """Check if candidate matches any pattern in our whitelist"""
+    # Check if it's a full match
+    if candidate in pattern_whitelist:
+        return True
+    
+    # Check if it starts with https://doi.org/ and the part after matches
+    if candidate.startswith('https://doi.org/'):
+        doi_part = candidate[16:]
+        if '/' in doi_part:
+            prefix = doi_part.split('/')[0]
+            return prefix in pattern_whitelist
+        return doi_part in pattern_whitelist
+    
+    # Check if the first part matches
+    first_part = candidate.split('.')[0]
+    return first_part in pattern_whitelist
+
+# Load training data to build whitelist
+train_labels = pd.read_csv('/kaggle/input/make-data-count-finding-data-references/train_labels.csv')
+pattern_whitelist = create_pattern_whitelist(train_labels)
+
+print(f"Created whitelist with {len(pattern_whitelist)} patterns")
+print("Sample patterns:", list(pattern_whitelist)[:20])
+
+# In your pipeline, replace the filtering step with:
+def filter_candidates_with_whitelist(candidates, pattern_whitelist):
+    """Filter candidates using the pattern whitelist"""
+    filtered = []
+    for candidate in candidates:
+        if should_include_candidate(candidate, pattern_whitelist):
+            filtered.append(candidate)
+    return filtered
+
+def process_article(article_text, article_id, pattern_whitelist):
+    """Process a single article to extract dataset candidates"""
+    candidates = extract_candidates_inclusive(article_text)
+    filtered_candidates = filter_candidates_with_whitelist(candidates, pattern_whitelist)
+    return filtered_candidates
+    
+def extract_candidates_inclusive(text):
+    """Extract potential dataset identifiers more inclusively"""
+    candidates = set()
+    
+    # Look for DOI patterns (current approach)
+    doi_patterns = [
+        r'doi\.org/([^\s\)\]\>]+)',
+        r'doi:\s*([^\s\)\]\>]+)',
+        r'https?://doi\.org/([^\s\)\]\>]+)'
+    ]
+    
+    for pattern in doi_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            candidates.add(f"https://doi.org/{match}")
+    
+    # Look for accession numbers and other identifiers
+    accession_patterns = [
+        r'\b(GSE\d+)\b',  # GEO accession
+        r'\b(SRR\d+)\b',  # SRA accession  
+        r'\b(PRJ[A-Z]+\d+)\b',  # Project accession
+        r'\b(EMPIAR-\d+)\b',  # EMPIAR accession
+        r'\b(CHEMBL\d+)\b',  # ChEMBL ID
+        r'\b(IPR\d+)\b',  # InterPro ID
+        r'\b(PF\d+)\b',  # Pfam ID
+        r'\b([A-Z]{1,2}_[A-Z0-9]+)\b',  # Various accession patterns
+    ]
+    
+    for pattern in accession_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            candidates.add(match)
+    
+    return list(candidates)
+
+
+print("Text processing functions defined")
