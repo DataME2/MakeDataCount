@@ -1,5 +1,4 @@
-# MakeDataCount
-Make Data Count Project in Kaggle
+# Make Data Count Project in Kaggle
 # Finding & Classifying Dataset Citations in Research Papers (PDF/XML)
 
 Automated pipeline to **find, normalize, and classify dataset citations** in scholarly articles (PDF/XML).  
