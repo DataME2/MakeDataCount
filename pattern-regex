@@ -1,0 +1,249 @@
+# ================================================================================
+# PATTERNS AND REGEX DEFINITIONS
+# ================================================================================
+
+# Enhanced regex pattern for better Dryad detection
+ENHANCED_REGEX_IDS = re.compile(r"""(?x)  # Verbose mode for readability
+    # ❌ REMOVE THESE - Too broad, catches all journal DOIs:
+    # (?:(?:https?://)?(?:dx\.)?doi\.org/)?10\.\d{4,9}/[^\s,;()\[\]<>\"']+|
+    # (?:doi:?\s*)?10\.\d{4,9}/[^\s,;()\[\]<>\"']+|
+    
+    # ✅ KEEP - Dryad specific patterns
+    (?:https?://)?(?:dx\.)?doi\.org/10\.5061/dryad\.[a-z0-9.]+|
+    (?:https?://)?datadryad\.org/(?:stash/)?dataset/doi:10\.5061/dryad\.[a-z0-9.]+|
+    dryad\.org/(?:stash/)?dataset/doi:10\.5061/[^\s,;()]+|
+    10\.5061/dryad\.[a-z0-9.]+|
+    dryad\.[a-z0-9]+(?:\.[a-z0-9]+)*|
+    
+    # ✅ KEEP - Zenodo patterns
+    (?:https?://)?zenodo\.org/records?/\d+(?:/files/[^\s,;()]+)?|
+    10\.5281/zenodo\.\d+|
+    zenodo\.\d+|
+    
+    # ✅ KEEP - Figshare patterns
+    (?:https?://)?(?:www\.)?figshare\.com/(?:articles|s/[a-f0-9]+)/[^\s,;()]+|
+    10\.6084/m9\.figshare\.[^\s,;()]+|
+    figshare:\s*[\w/.]+|
+    
+    # ✅ KEEP - Other repository DOIs (specific prefixes only)
+    10\.17632/[^\s,;()]+|  # Mendeley Data
+    10\.24433/[^\s,;()]+|  # Mendeley Data
+    10\.7910/DVN/[^\s,;()]+|  # Dataverse
+    10\.25349/[^\s,;()]+|  # California Digital Library
+    10\.5066/[^\s,;()]+|  # USGS
+    10\.7937/[^\s,;()]+|  # TCIA
+    10\.1594/PANGAEA\.\d+|  # PANGAEA
+    10\.15468/[^\s,;()]+|  # GBIF
+    10\.3886/[^\s,;()]+|  # ICPSR
+    10\.5067/[^\s,;()]+|  # NASA
+    10\.7289/[^\s,;()]+|  # NOAA
+    
+    # ✅ KEEP - GitHub/GitLab/OSF patterns
+    (?:https?://)?github\.com/[\w\-/]+|
+    (?:https?://)?gitlab\.com/[\w\-/]+|
+    (?:https?://)?osf\.io/[\w/]+|
+    
+    # ✅ KEEP - Database accessions
+    \bGSE\d{3,10}\b|
+    \bGS[MD]\d{3,10}\b|
+    \bGPL\d{3,10}\b|
+    \bGDS\d{3,10}\b|
+    \b(?:SRR|SRX|SRP|SRA|SRS|SRZ)\d{6,10}\b|
+    \b(?:ERR|ERX|ERP|ERA|ERS|ERZ)\d{6,10}\b|
+    \b(?:DRR|DRX|DRP|DRA|DRS|DRZ)\d{6,10}\b|
+    \bPRJ(?:NA|EB|DB|ND)[A-Z]?\d{4,10}\b|
+    \bPXD\d{6,10}\b|
+    \bSAM[NEAD]\d{6,10}\b|
+    \bE-(?:GEOD|MTAB|MEXP|PROT)-\d+\b|
+    \bEMPIAR-\d+\b|
+    \bEMD-\d+\b|
+    \bEPI_ISL_\d{6,}\b|
+    \bArrayExpress:?\s*E-[A-Z]{4}-\d+\b|
+    \bProteomeXchange:?\s*PXD\d+\b|
+    \bGEO:?\s*GSE\d+\b|
+    
+    # ⚠️ MAYBE REMOVE - These might catch too many false positives:
+    # \bCHEMBL\d+\b|
+    # \bENS[A-Z]{2,5}\d+(?:\.\d+)?\b|
+    # \bHPA\d{6}\b|
+    # \bIPR\d{6}\b|
+    # \bPF\d{5}\b|
+    # \bNC_\d{6}\.\d+\b|
+    # \bNM_\d{9}\b|
+    # \bPDB\s*:?\s*[1-9][A-Z0-9]{3}\b|
+    # \bHMDB\d{7}\b|
+    # \b[A-Z]{1,2}\d{5,8}(?:\.\d+)?\b|  # Too generic
+    # \b[A-Z]{4,6}\d{8,10}\b|  # Too generic
+    
+    # ❌ REMOVE - This is way too broad:
+    # https?://[\w\-\.]+/(?:dataset|data|repository|accession|record)/[\w\-\./%]+
+""", re.IGNORECASE | re.MULTILINE)
+
+# Additional patterns for data availability statements
+DATA_AVAILABILITY_PATTERNS = [
+    re.compile(r'(?:data|datasets?)\s+(?:are|is)\s+available\s+(?:at|from|in|on|through)', re.IGNORECASE),
+    re.compile(r'deposited\s+(?:at|in|to|on)', re.IGNORECASE),
+    re.compile(r'(?:can\s+be\s+)?(?:accessed|found|downloaded)\s+(?:at|from|in)', re.IGNORECASE),
+    re.compile(r'accession\s+(?:number|code|id)', re.IGNORECASE),
+    re.compile(r'(?:raw|processed|supplementary)\s+data', re.IGNORECASE),
+    re.compile(r'data\s+(?:availability|access)', re.IGNORECASE),
+    re.compile(r'available\s+(?:under|with)\s+(?:the\s+)?accession', re.IGNORECASE),
+]
+
+# Enhanced reference header patterns
+REF_HEADER_PATTERNS = [
+    re.compile(r'\b(?:REFERENCES?|BIBLIOGRAPHY|LITERATURE\s+CITED|WORKS\s+CITED|CITED\s+WORKS)\s*[:\s]*', re.IGNORECASE),
+    re.compile(r'\b(?:ACKNOWLEDGEMENTS?|ACKNOWLEDGMENTS?)\s*[:\s]*', re.IGNORECASE | re.MULTILINE),
+    re.compile(r'^\s*\d+\.\s*REFERENCES?\s*$', re.IGNORECASE | re.MULTILINE),
+    re.compile(r'^\s*(?:APPENDIX|SUPPLEMENTARY|SUPPORTING)\s+(?:INFORMATION|MATERIAL)', re.IGNORECASE | re.MULTILINE)
+]
+
+# Citation patterns for better detection
+CITATION_PATTERNS = [
+    re.compile(r'^\s*\[\d+\]\s+', re.MULTILINE),  # [1] format
+    re.compile(r'^\s*\d+\.\s+[A-Z]', re.MULTILINE),  # 1. Author format
+    re.compile(r'^\s*\d+\)\s+[A-Z]', re.MULTILINE),  # 1) Author format
+    re.compile(r'^\s*\(\d+\)\s+[A-Z]', re.MULTILINE),  # (1) Author format
+]
+
+# False positive patterns
+FALSE_POSITIVE_PATTERNS = [
+    re.compile(r'\b\d{4}[A-Z]\b'),  # Years with letters
+    re.compile(r'\bp\s*[<>=]\s*0\.\d+\b', re.IGNORECASE),  # p-values
+]
+
+# Missing type Patterns
+MISSING_TYPE_PATTERNS = [
+    # Invalid DOI formats (EPI1019553, GSE101689, etc.)
+    re.compile(r'https://doi\.org/[A-Z]+[0-9]+', re.IGNORECASE),
+    re.compile(r'https://doi\.org/[A-Z]+[0-9]+\.[A-Z]+[0-9]+', re.IGNORECASE),
+    re.compile(r'https://doi\.org/GEOD[0-9]+', re.IGNORECASE),
+    re.compile(r'https://doi\.org/GSE[0-9]+', re.IGNORECASE),
+    re.compile(r'https://doi\.org/DRA[0-9]+', re.IGNORECASE),
+    
+    # Figshare with versioning
+    re.compile(r'm9\.figshare\.[^\s]+(?:\.v\d+|_v\d+)', re.IGNORECASE),
+    # GBIF
+    re.compile(r'dl\.[a-z0-9]+', re.IGNORECASE),
+    # CSD
+    re.compile(r'10\.5517/ccdc\.csd\.', re.IGNORECASE),
+    # HGNC
+    re.compile(r'hgnc:\d+', re.IGNORECASE),
+    # Cell lines
+    re.compile(r'cvcl_[a-z0-9]+', re.IGNORECASE),
+    # PDB
+    re.compile(r'\bPDB\s*:?\s*[1-9][A-Z0-9]{3}\b', re.IGNORECASE),
+    # GEO
+    re.compile(r'\bGSE\d+', re.IGNORECASE),
+    # Proteomics
+    re.compile(r'e-prot-\d+', re.IGNORECASE),
+    re.compile(r'cab\d+', re.IGNORECASE),
+    # HEPData
+    re.compile(r'hepdata\.org', re.IGNORECASE),
+    # ENA
+    re.compile(r'E-(?:GEOD|MTAB|P|RS|RX|RR)-\d+', re.IGNORECASE),
+    # ArrayExpress
+    re.compile(r'ArrayExpress:\s*E-\w+-\d+', re.IGNORECASE),
+]
+
+# DOI prefix lists
+PAPER_PREFIXES = [
+    "10.1007", "10.1002", "10.1016", "10.1021", "10.1038",
+    "10.1056", "10.1073", "10.1080", "10.1093", "10.1101",
+    "10.1186", "10.1371", "10.1111", "10.5194", "10.3390",
+    "10.1126", "10.1136", "10.1001", "10.1145", "10.1177",
+]
+
+def load_dynamic_paper_prefixes():
+    """Extract journal DOI prefixes from training labels to improve filtering"""
+    
+    if SPLIT == 'test':
+        # In test mode, return the hardcoded list
+        return PAPER_PREFIXES
+    
+    labels_path = BASE_PATH / "train_labels.csv"
+    if not labels_path.exists():
+        print("Warning: train_labels.csv not found, using hardcoded PAPER_PREFIXES")
+        return PAPER_PREFIXES
+    
+    # Load training labels
+    df = pl.read_csv(labels_path)
+    
+    # Extract all unique article_ids
+    article_ids = df['article_id'].unique().to_list()
+    
+    # Extract DOI prefixes from article_ids
+    paper_prefixes = set(PAPER_PREFIXES)  # Start with hardcoded list
+    
+    for article_id in article_ids:
+        # Look for DOI pattern in article_id
+        doi_match = re.search(r'10\.(\d{4,9})', str(article_id))
+        if doi_match:
+            prefix = f"10.{doi_match.group(1)}"
+            paper_prefixes.add(prefix)
+            
+        # Also check if article_id contains full DOI
+        full_doi_match = re.search(r'(10\.\d{4,9})/[^\s]+', str(article_id))
+        if full_doi_match:
+            prefix = full_doi_match.group(1)
+            paper_prefixes.add(prefix)
+    
+    dynamic_prefixes = sorted(list(paper_prefixes))
+    
+    print(f"📊 Dynamic PAPER_PREFIXES: Found {len(dynamic_prefixes)} journal prefixes")
+    print(f"   Added {len(dynamic_prefixes) - len(PAPER_PREFIXES)} new prefixes from training data")
+    
+    return dynamic_prefixes
+
+# Update the global variable at startup
+PAPER_PREFIXES = load_dynamic_paper_prefixes()
+
+
+DATA_DOI_PREFIXES = [
+    "10.5061", "10.5281", "10.6084", "10.17632", "10.24433",
+    "10.7910", "10.1594", "10.15468", "10.17882", "10.7937",
+    "10.3886", "10.3334", "10.4121", "10.5066", "10.5067",
+    "10.6073", "10.18150", "10.25377", "10.25387", "10.23642",
+    "10.24381", "10.22033", "10.6019", "10.15454", "10.7289",
+    "10.25349", "10.24341", "10.18738","10.5256", # F1000Research
+    "10.6075",  # CaltechDATA
+    "10.5441",  # Movebank
+    "10.13020", # Archaeology Data Service
+    "10.5683",  # DataverseNL
+    "10.26300", # DANS
+    "10.5072",  # Test DOIs (might be sandbox)
+    "10.2307",
+    "10.1046",
+    "10.1146",
+    "10.1175",
+]
+
+# Keywords for classification
+PRIMARY_INDICATORS = [
+    "data supporting this study", "supporting data", "underlying data", "underlying this article",
+    "supplementary material", "supplementary data", "our dataset", "data we generated",
+    "deposited at", "available at", "data is available", "data can be found",
+    "this dataset", "the data presented here", "data for this publication",
+    "raw data", "experimental data", "collected data", "generated data",
+    "data used in this study", "data presented in this study"
+]
+
+SECONDARY_INDICATORS = [
+    "data from", "datasets presented in", "based on data from", "cited from", "reported by",
+    "previously published data", "publicly available data", "external data", "third-party data",
+    "data presented here", "can be found in online repositories", "data in",
+    "data from reference", "data cited", "data from the study", "data from the paper"
+]
+
+# Global debug counter
+DEBUG_COUNTS = {
+    'total_files': 0,
+    'total_raw_matches': 0,
+    'after_invalid_id': 0,
+    'after_false_positive': 0,
+    'after_doi_normalization': 0,
+    'after_dedup': 0,
+    'final_submission': 0
+}
+
+print("Patterns and constants defined")
