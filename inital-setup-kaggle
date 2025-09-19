@@ -1,0 +1,56 @@
+# ================================================================================
+# INITIAL SETUP AND CONFIGURATION
+# ================================================================================
+
+# Environment detection
+IS_KAGGLE_ENV = 'KAGGLE_KERNEL_RUN_TYPE' in os.environ
+IS_KAGGLE_SUBMISSION = bool(os.getenv("KAGGLE_IS_COMPETITION_RERUN"))
+
+print(f"Environment: {'Kaggle' if IS_KAGGLE_ENV else 'Local'}")
+print(f"Submission Mode: {IS_KAGGLE_SUBMISSION}")
+
+# Package installation (only for Kaggle)
+if IS_KAGGLE_ENV:
+    try:
+        os.system("uv pip uninstall --system 'tensorflow'")
+        # os.system("uv pip install --system --no-index --find-links='/kaggle/input/pypdfium-library/' 'pymupdf'")
+        os.system("uv pip install --system --no-index --find-links='/kaggle/input/wheels-library/wheels' 'vllm' 'triton' 'logits-processor-zoo' 'numpy<2'")
+        
+        try:
+            import transformers
+            print("Transformers already available")
+        except ImportError:
+            print("Installing transformers...")
+            os.system("pip install --no-index --find-links='/kaggle/input/transformers-library' transformers datasets accelerate")
+        
+        os.system("mkdir -p /tmp/src")
+        print("Package installation complete")
+        
+    except Exception as e:
+        print(f"Installation warning: {e}")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+warnings.filterwarnings('ignore')
+logging.disable(logging.WARNING)
+
+# Paths configuration
+BASE_PATH = Path('/kaggle/input/make-data-count-finding-data-references/')
+SPLIT = 'test' if IS_KAGGLE_SUBMISSION else 'train'
+DATA_DIR = BASE_PATH / SPLIT
+PDF_DIR = DATA_DIR / 'PDF'
+XML_DIR = DATA_DIR / 'XML'
+WORKING_DIR = Path('/kaggle/working/')
+PARSE_DIR = Path('/tmp/parsed_texts')
+MODEL_DIR = Path('/kaggle/working/scibert_model')
+
+# Create directories
+PARSE_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+WORKING_DIR.mkdir(parents=True, exist_ok=True)
+
+print(f"Environment Setup Complete")
+print(f"Data Directory: {DATA_DIR}")
+print(f"Split: {SPLIT}")
+print(f"Submission Mode: {IS_KAGGLE_SUBMISSION}")
