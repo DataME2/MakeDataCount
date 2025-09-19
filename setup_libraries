@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+# ================================================================================
+# Make Data Count - Finding Data References - Complete Python Script
+# ================================================================================
+
+import sys
+import re
+import gc
+import warnings
+import pathlib
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional, Set
+from dataclasses import dataclass
+import multiprocessing as mp
+import unicodedata
+import logging
+import pandas as pd
+
+import numpy as np
+import polars as pl
+from tqdm.auto import tqdm
+import pymupdf  # For PDF processing
+from lxml import etree  # For XML processing
+
+# ML imports
+import torch
+from torch.utils.data import DataLoader, Dataset
+from transformers import (
+    AutoTokenizer, AutoModelForSequenceClassification,
+    TrainingArguments, Trainer, set_seed
+)
+from sklearn.metrics import classification_report, precision_recall_fscore_support
+from sklearn.model_selection import train_test_split
+
+import os
+os.system("uv pip install --system --no-index --find-links='/kaggle/input/pypdfium-library' 'pymupdf'")
