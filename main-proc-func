@@ -1,0 +1,227 @@
+# ================================================================================
+# MAIN PROCESSING FUNCTIONS
+# ================================================================================
+
+def extract_candidates_enhanced(text: str, article_id: str, model=None, tokenizer=None, device=None) -> List[Dict]:
+    """Extract dataset candidates from text with enhanced filtering"""
+    text = normalize_string(text)
+    text = reconstruct_split_citations(text)
+    body_text, ref_text = split_text_and_references_enhanced(text)
+    
+    candidates = []
+    processed_ids = set()
+    
+    # Find data availability sections FIRST
+    data_sections = []
+    data_section_texts = []
+    for pattern in DATA_AVAILABILITY_PATTERNS:
+        for match in pattern.finditer(text):
+            start = max(0, match.start() - 200)
+            end = min(len(text), match.end() + 1000)
+            data_sections.append((start, end))
+            data_section_texts.append(text[start:end])
+    
+    # STRATEGY 1: Focus on data sections for DOIs AND accession numbers
+    for section_text in data_section_texts:
+        # Look for both DOIs AND accession numbers in data availability sections
+        doi_matches = re.finditer(r'10\.\d{4,9}/[^\s,;()]+', section_text)
+        accession_matches = re.finditer(r'^(?:GSE|GSM|GDS|SRR|SRX|SRP|SRA|DRR|DRX|DRP|ERR|ERX|ERP|PRJNA|PRJEB|PRJDB|E-MTAB|E-GEOD|PXD|EMPIAR|E-PROT|CAB|PF|IPR|EPI_ISL|CP|SAMN|SAMD|SAMEA)\d+[A-Z0-9._-]*$', section_text, re.IGNORECASE)
+        
+        # Process DOI matches
+        for match in doi_matches:
+            raw_id = match.group()
+            dataset_id = normalize_dataset_id(raw_id)
+            
+            if dataset_id and dataset_id not in processed_ids:
+                processed_ids.add(dataset_id)
+                
+                # Get context
+                context = section_text[max(0, match.start()-100):min(len(section_text), match.end()+100)]
+                
+                # Check if it's likely a data DOI (not journal)
+                doi_prefix = re.search(r'10\.\d{4,9}', dataset_id)
+                if doi_prefix:
+                    prefix = doi_prefix.group()
+                    # Skip known journal prefixes in data sections unless strong indicators
+                    if prefix in PAPER_PREFIXES:
+                        ctx_lower = context.lower()
+                        if not any(x in ctx_lower for x in ['deposited', 'available at', 'dataset doi', 'supporting data']):
+                            continue
+                
+                candidates.append({
+                    'article_id': article_id,
+                    'dataset_id': dataset_id,
+                    'context': context[:500],
+                    'type': 'Primary'  # Data sections are usually Primary
+                })
+        
+        # Process accession number matches in data sections
+        for match in accession_matches:
+            raw_id = match.group()
+            dataset_id = normalize_dataset_id(raw_id)
+            
+            if dataset_id and dataset_id not in processed_ids:
+                processed_ids.add(dataset_id)
+                
+                context = section_text[max(0, match.start()-100):min(len(section_text), match.end()+100)]
+                
+                candidates.append({
+                    'article_id': article_id,
+                    'dataset_id': dataset_id,
+                    'context': context[:500],
+                    'type': 'Primary'  # Accession numbers in data sections are usually Primary
+                })
+    
+    # STRATEGY 2: Look for accession numbers in specific contexts
+    ACCESSION_CONTEXT_PATTERNS = [
+        r'accession\s+(?:number|code|id)\s*[:\s]*([A-Z]+\d+[A-Z0-9._-]*)',
+        r'(?:GEO|SRA|ArrayExpress|ProteomeXchange|GenBank|ENA)\s+accession\s*[:\s]*([A-Z]+\d+[A-Z0-9._-]*)',
+        r'\b([A-Z]{2,}\d+[A-Z0-9._-]*)\s+\([^)]*accession[^)]*\)',
+        r'accession\s*[:\s]*([A-Z]+\d+[A-Z0-9._-]*)',
+    ]
+    
+    for pattern in ACCESSION_CONTEXT_PATTERNS:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            accession = match.group(1)
+            if accession and len(accession) >= 5 and accession not in processed_ids:
+                dataset_id = normalize_dataset_id(accession)
+                if dataset_id:
+                    processed_ids.add(dataset_id)
+                    
+                    match_start, match_end = match.span()
+                    context = get_context_window_enhanced(text, match_start, match_end, 300)
+                    section_type = detect_section_type(text, match_start)
+                    
+                    citation_type = hybrid_classify(context, section_type, dataset_id, model, tokenizer, device)
+                    
+                    candidates.append({
+                        'article_id': article_id,
+                        'dataset_id': dataset_id,
+                        'context': context[:500],
+                        'type': citation_type
+                    })
+    
+    # STRATEGY 3: Look for specific data repository patterns everywhere
+    DATA_REPO_PATTERNS = [
+        # Dryad
+        (r'(?:10\.5061/)?dryad\.[a-z0-9]+(?:\.[a-z0-9]+)*', 'dryad'),
+        # Zenodo
+        (r'(?:10\.5281/)?zenodo\.\d+', 'zenodo'),
+        # Figshare
+        (r'(?:10\.6084/)?m9\.figshare\.\d+(?:\.v\d+)?', 'figshare'),
+        # Mendeley
+        (r'10\.17632/[^\s,;()<>\"\'\[\]\{\}]+', 'mendeley'),
+        # Harvard Dataverse
+        (r'10\.7910/DVN/[^\s,;()<>\"\'\[\]\{\}]+', 'dataverse'),
+        # PANGAEA
+        (r'10\.1594/PANGAEA\.\d+', 'pangaea'),
+        # GEO
+        (r'\bGSE\d{3,10}\b', 'geo'),
+        # SRA
+        (r'\b(?:SRR|SRX|SRP|SRA)\d{6,10}\b', 'sra'),
+        # ProteomeXchange
+        (r'\bPXD\d{6,10}\b', 'proteomexchange'),
+        # ArrayExpress
+        (r'\bE-(?:MTAB|GEOD|MEXP)-\d+\b', 'arrayexpress'),
+        # BioProject
+        (r'\bPRJ(?:NA|EB|DB)\d{4,10}\b', 'bioproject'),
+        # EMPIAR
+        (r'\bEMPIAR-\d+\b', 'empiar'),
+        # ENA
+        (r'\b(?:ERP|ERR|ERX)\d{6,10}\b', 'ena'),
+    ]
+    
+    for pattern, repo_type in DATA_REPO_PATTERNS:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            raw_id = match.group()
+            dataset_id = normalize_dataset_id(raw_id)
+            
+            if not dataset_id or dataset_id in processed_ids:
+                continue
+            processed_ids.add(dataset_id)
+            
+            # Get context and classify
+            match_start, match_end = match.span()
+            context = get_context_window_enhanced(text, match_start, match_end, 500)
+            section_type = detect_section_type(text, match_start)
+            in_data_section = any(start <= match_start <= end for start, end in data_sections)
+            
+            # Better classification based on repository type and context
+            if in_data_section or repo_type in ['dryad', 'zenodo', 'figshare', 'mendeley']:
+                citation_type = 'Primary'
+            elif section_type == 'references':
+                citation_type = 'Secondary'
+            else:
+                citation_type = hybrid_classify(context, section_type, dataset_id, model, tokenizer, device)
+            
+            candidates.append({
+                'article_id': article_id,
+                'dataset_id': dataset_id,
+                'context': context[:500],
+                'type': citation_type
+            })
+    
+    # STRATEGY 4: Look for DOIs and accessions in specific contexts
+    CONTEXTUAL_PATTERNS = [
+        r'(?:deposited|available|accessible)\s+(?:at|in|from)\s+(?:the\s+)?([^\s,;.]+)',
+        r'(?:data|dataset|datasets)\s+(?:doi|DOI):\s*([^\s,;]+)',
+        r'accession\s+(?:number|code|id):\s*([^\s,;]+)',
+    ]
+    
+    for pattern in CONTEXTUAL_PATTERNS:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            potential_id = match.group(1) if match.lastindex else match.group()
+            
+            # Check if it looks like a DOI or accession
+            if re.search(r'10\.\d{4,9}/|^[A-Z]{2,}\d+', potential_id):
+                dataset_id = normalize_dataset_id(potential_id)
+                
+                if dataset_id and dataset_id not in processed_ids:
+                    processed_ids.add(dataset_id)
+                    
+                    context = text[max(0, match.start()-200):min(len(text), match.end()+200)]
+                    section_type = detect_section_type(text, match.start())
+                    
+                    citation_type = 'Primary'  # Default for contextual matches
+                    if section_type == 'references':
+                        citation_type = 'Secondary'
+                    
+                    candidates.append({
+                        'article_id': article_id,
+                        'dataset_id': dataset_id,
+                        'context': context[:500],
+                        'type': citation_type
+                    })
+    
+    return candidates
+
+def parse_all_documents():
+    """Parse all PDF and XML documents, handling potential name conflicts"""
+    parsed_count = 0
+    
+    # Process PDFs
+    pdf_files = list(PDF_DIR.glob("*.pdf")) if PDF_DIR.exists() else []
+    for pdf_file in tqdm(pdf_files, desc="Processing PDFs"):
+        try:
+            text = pdf2text(pdf_file)
+            output_path = PARSE_DIR / f"{pdf_file.stem}_pdf.txt"
+            output_path.write_text(text, encoding='utf-8')
+            parsed_count += 1
+        except Exception as e:
+            logger.error(f"Failed to process {pdf_file}: {e}")
+    
+    # Process XMLs
+    xml_files = list(XML_DIR.glob("*.xml")) if XML_DIR.exists() else []
+    for xml_file in tqdm(xml_files, desc="Processing XMLs"):
+        try:
+            text = xml2text(xml_file)
+            output_path = PARSE_DIR / f"{xml_file.stem}_xml.txt"
+            output_path.write_text(text, encoding='utf-8')
+            parsed_count += 1
+        except Exception as e:
+            logger.error(f"Failed to process {xml_file}: {e}")
+    
+    print(f"Total documents parsed: {parsed_count}")
+    return parsed_count
+
+print("Main processing functions defined")
