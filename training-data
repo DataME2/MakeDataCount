@@ -1,0 +1,77 @@
+# ================================================================================
+# TRAINING DATA PREPARATION
+# ================================================================================
+
+def load_and_prepare_training_data():
+    """Load train_labels.csv and prepare for SciBERT training"""
+    if SPLIT == 'test':
+        print("Cannot train in submission mode. Using dummy data for syntax check.")
+        return pl.DataFrame({
+            'article_id': ['dummy'],
+            'dataset_id': ['https://doi.org/10.5061/dryad.abc123'],
+            'context': ['Our data are available in Dryad.'],
+            'type': ['Primary']
+        })
+    
+    # Load training labels
+    labels_path = BASE_PATH / "train_labels.csv"
+    if not labels_path.exists():
+        print(f"Warning: {labels_path} not found")
+        return None
+    
+    df = pl.read_csv(labels_path)
+    
+    # Filter only Primary/Secondary (exclude 'Missing')
+    df = df.filter(pl.col("type").is_in(["Primary", "Secondary"]))
+    
+    # Load parsed texts to get context
+    if not PARSE_DIR.exists():
+        print("Parsed texts not found. Run parsing first.")
+        return None
+    
+    context_map = {}
+    for txt_file in PARSE_DIR.glob("*.txt"):
+        article_id = txt_file.stem
+        # Remove suffix to get original article_id
+        if article_id.endswith('_pdf'):
+            article_id = article_id[:-4]
+        elif article_id.endswith('_xml'):
+            article_id = article_id[:-4]
+            
+        with open(txt_file, 'r', encoding='utf-8') as f:
+            context_map[article_id] = f.read()
+    
+    # Add context to labels
+    records = []
+    for row in df.rows(named=True):
+        article_id = row['article_id']
+        dataset_id = row['dataset_id']
+        context = context_map.get(article_id, "")
+        
+        if not context:
+            continue
+        
+        # Extract window around dataset_id
+        idx = context.lower().find(dataset_id.lower())
+        if idx == -1:
+            # Try partial match
+            dataset_short = dataset_id.split('/')[-1] if '/' in dataset_id else dataset_id
+            idx = context.lower().find(dataset_short.lower())
+        
+        if idx == -1:
+            continue
+        
+        start = max(0, idx - 200)
+        end = min(len(context), idx + 200)
+        window = context[start:end]
+        
+        records.append({
+            'text': window,
+            'label': 1 if row['type'] == 'Primary' else 0,
+            'article_id': article_id,
+            'dataset_id': dataset_id
+        })
+    
+    return pl.DataFrame(records)
+
+print("Training data preparation functions defined")
