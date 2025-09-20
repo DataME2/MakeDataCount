@@ -1,0 +1,48 @@
+# ================================================================================
+# ML MODEL SETUP
+# ================================================================================
+
+class DatasetMentionDataset(Dataset):
+    """Dataset class for SciBERT training"""
+    def __init__(self, texts: List[str], labels: List[int], tokenizer, max_length=128):
+        self.texts = texts
+        self.labels = labels
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self):
+        return len(self.texts)
+
+    def __getitem__(self, idx):
+        text = str(self.texts[idx])
+        label = self.labels[idx]
+        
+        encoding = self.tokenizer(
+            text,
+            truncation=True,
+            padding='max_length',
+            max_length=self.max_length,
+            return_tensors='pt'
+        )
+        
+        return {
+            'input_ids': encoding['input_ids'].flatten(),
+            'attention_mask': encoding['attention_mask'].flatten(),
+            'labels': torch.tensor(label, dtype=torch.long)
+        }
+
+def compute_metrics(eval_pred):
+    """Compute evaluation metrics"""
+    predictions, labels = eval_pred
+    preds = predictions.argmax(axis=1)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels, preds, average='binary'
+    )
+    return {
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+        'accuracy': (preds == labels).mean()
+    }
+
+print("ML components defined")
