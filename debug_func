@@ -1,0 +1,84 @@
+# ================================================================================
+# DEBUG FUNCTIONS FOR "NO CANDIDATES FOUND" ISSUE
+# ================================================================================
+
+def debug_candidate_extraction():
+    """Debug why no candidates are found"""
+    sample_files = list(PARSE_DIR.glob('*.txt'))[:5]  # Check first 5 files
+    
+    print(f"\n=== DEBUGGING CANDIDATE EXTRACTION ===")
+    print(f"Total parsed files: {len(list(PARSE_DIR.glob('*.txt')))}")
+    print(f"Checking first {len(sample_files)} files...")
+    
+    total_matches = 0
+    
+    for txt_file in sample_files:
+        print(f"\n--- File: {txt_file.name} ---")
+        with open(txt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        print(f"File size: {len(content)} characters")
+        
+        # Test regex matches
+        matches = list(ENHANCED_REGEX_IDS.finditer(content))
+        print(f"Raw regex matches: {len(matches)}")
+        total_matches += len(matches)
+        
+        # Show first few matches
+        for i, match in enumerate(matches[:3]):
+            print(f"  Match {i+1}: '{match.group()}'")
+            
+        # Test some common patterns
+        doi_matches = re.findall(r'10\.\d{4,}/[^\s,;()]+', content, re.IGNORECASE)
+        print(f"DOI patterns found: {len(doi_matches)}")
+        if doi_matches:
+            print(f"  Examples: {doi_matches[:3]}")
+            
+        # Test specific data repository patterns
+        dryad_matches = re.findall(r'dryad\.[a-z0-9.]+', content, re.IGNORECASE)
+        zenodo_matches = re.findall(r'zenodo\.\d+', content, re.IGNORECASE)
+        gse_matches = re.findall(r'GSE\d+', content, re.IGNORECASE)
+        
+        print(f"Dryad matches: {len(dryad_matches)} | Zenodo: {len(zenodo_matches)} | GSE: {len(gse_matches)}")
+        
+        # Show a snippet of text
+        print(f"Text sample (first 300 chars):")
+        print(f"  {content[:300]}...")
+    
+    print(f"\n=== SUMMARY ===")
+    print(f"Total regex matches across {len(sample_files)} files: {total_matches}")
+    
+    if total_matches == 0:
+        print("❌ No matches found - this explains the 'No candidates found' error!")
+        print("💡 Possible issues:")
+        print("  1. Text extraction from PDFs/XMLs may have failed")
+        print("  2. Regex patterns may not match the actual text format")
+        print("  3. Dataset IDs may be in different formats than expected")
+    else:
+        print("✅ Matches found in raw text - issue may be in post-processing")
+
+def test_regex_patterns():
+    """Test regex patterns with known examples"""
+    print("\n=== TESTING REGEX PATTERNS ===")
+    
+    test_examples = [
+        "Data are available at https://doi.org/10.5061/dryad.abc123",
+        "The dataset GSE12345 contains expression data",
+        "Data deposited in Zenodo: 10.5281/zenodo.123456",
+        "Available at doi:10.6084/m9.figshare.12345678",
+        "Sequences are available in GenBank under accession NC_123456.1",
+        "The data supporting this study are openly available in FigShare at https://doi.org/10.6084/m9.figshare.1234567",
+        "Raw data are available from the corresponding author and at dryad.digital.repository",
+        "Data have been deposited at ArrayExpress E-MTAB-1234"
+    ]
+    
+    for i, example in enumerate(test_examples, 1):
+        print(f"\nTest {i}: {example}")
+        matches = list(ENHANCED_REGEX_IDS.finditer(example))
+        print(f"  Matches found: {len(matches)}")
+        for match in matches:
+            print(f"    - '{match.group()}'")
+            normalized = normalize_dataset_id(match.group())
+            print(f"    - Normalized: '{normalized}'")
+
+print("Debug functions defined")
