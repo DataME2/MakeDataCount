@@ -1,0 +1,70 @@
+# ================================================================================
+# MAIN EXECUTION PIPELINE
+# ================================================================================
+
+def main():
+    """Main execution pipeline"""
+    print("\n" + "="*60)
+    print("STARTING MAIN EXECUTION PIPELINE")
+    print("="*60)
+    
+    # Step 1: Parse all documents
+    print("\n--- STEP 1: Document Parsing ---")
+    parsed_count = parse_all_documents()
+    if parsed_count == 0:
+        print("No documents were parsed. Check input directories.")
+        return
+
+    # Step 2: Load model for inference
+    print("\n--- STEP 2: Model SciBert Loading Offline ---")
+    try:
+        model, tokenizer, device = load_scibert_model(MODEL_DIR)
+    except Exception as e:
+        print(f"Model loading failed: {e}")
+        model, tokenizer, device = None, None, None
+
+    # Step 3: Train model (only in training mode)
+    print("\n--- STEP 3: Model Training ---")
+    if SPLIT == 'train' and model is not None:
+        try:
+            model, tokenizer = train_scibert_model(model, tokenizer, device)
+        except Exception as e:
+            print(f"Training failed: {e}")
+            print("Continuing with rule-based classification")
+    
+    # Step 4: Build candidate dataframe
+    print("\n--- STEP 4: Candidate Extraction ---")
+    candidate_df = build_candidate_dataframe(model, tokenizer, device)
+    
+    if len(candidate_df) == 0:
+        print("No candidates found. Running debug analysis...")
+        debug_candidate_extraction()
+        test_regex_patterns()
+        return
+    
+    # Call this before generate_submission
+    analyze_doi_prefixes(candidate_df)
+
+    # Call before generate_submission
+    pipeline_diagnostic(candidate_df)
+
+    # Usage in your pipeline:
+    #filtered_candidates = filter_candidates_with_whitelist(candidates,pattern_whitelist)
+    
+        
+    # Step 5: Generate final submission
+    print("\n--- STEP 5: Final Submission ---")
+    # STEP 5: Final Submission
+    submission_df = generate_submission(candidate_df, output_path="/kaggle/working/submission.csv")
+
+    
+    # Add this line to analyze lost candidates
+    #if len(candidate_df) > 0 and len(submission_df) > 0:
+    analyze_lost_candidates(candidate_df, submission_df)
+
+    debug_lost_candidates(candidate_df, submission_df)
+
+        
+    print("\n" + "="*60)
+    print("PIPELINE EXECUTION COMPLETE")
+    print("="*60)
