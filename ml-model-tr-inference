@@ -1,0 +1,226 @@
+# ================================================================================
+# ML MODEL TRAINING AND INFERENCE
+# ================================================================================
+
+def train_scibert_model(model, tokenizer, device):
+    """Train SciBERT model for Primary/Secondary classification"""
+    print("Preparing training data...")
+    train_data = load_and_prepare_training_data()
+
+    os.environ["WANDB_DISABLED"] = "true"
+    
+    if train_data is None or len(train_data) == 0:
+        print("No training data found. Using pre-trained SciBERT model as-is")
+        return model, tokenizer
+
+    print(f"Loaded {len(train_data)} training examples")
+    print(f"Label distribution:\n{train_data['label'].value_counts()}")
+
+    # Create train/eval split
+    train_texts, val_texts, train_labels, val_labels = train_test_split(
+        train_data['text'].to_numpy(),
+        train_data['label'].to_numpy(),
+        test_size=0.2,
+        stratify=train_data['label'].to_numpy(),
+        random_state=42
+    )
+    
+    train_dataset = DatasetMentionDataset(train_texts, train_labels, tokenizer)
+    val_dataset = DatasetMentionDataset(val_texts, val_labels, tokenizer)
+    
+    print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
+
+    training_args = TrainingArguments(
+        output_dir=str(MODEL_DIR),
+        num_train_epochs=1,              # Reduce from 3 to 1
+        per_device_train_batch_size=32,  # Increase from 16 to 32
+        per_device_eval_batch_size=64,   # Increase from 32 to 64
+        warmup_ratio=0.05,               # Reduce from 0.1
+        weight_decay=0.01,
+        logging_steps=20,                # Reduce from 50
+        eval_strategy="no",        # Disable validation during training
+        save_strategy="epoch",
+        save_total_limit=1,
+        seed=42,
+        fp16=True,                       # Force FP16 for speed
+        dataloader_num_workers=0,        # Reduce from 2 (can cause issues in Kaggle)
+        gradient_accumulation_steps=2,   # Add this for effective larger batch
+        max_steps=100,                   # Limit total steps
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        tokenizer=tokenizer,
+        compute_metrics=compute_metrics
+    )
+
+    print("Starting training on offline SciBERT model...")
+    trainer.train()
+    print("Training complete.")
+
+    # Save updated model
+    model.save_pretrained(str(MODEL_DIR))
+    tokenizer.save_pretrained(str(MODEL_DIR))
+    print("Updated model and tokenizer saved.")
+
+    return model, tokenizer
+
+def load_scibert_model(model_dir: Path = None) -> Tuple[Optional[object], Optional[object], Optional[str]]:
+    """Load SciBERT model with fallbacks for Kaggle offline mode"""
+    
+    # Primary path: Loaded model from Kaggle dataset
+    kaggle_model_path = Path('/kaggle/input/load-scibert-model/trained-scibert-model/')
+    
+    # Secondary path: Local trained model (if provided)
+    local_model_path = model_dir if model_dir else Path('/kaggle/working/scibert_model')
+    
+    device = None
+    
+    # Try loading from Kaggle dataset first
+    try:
+        print(f"Loading model from Kaggle dataset: {kaggle_model_path}")
+        
+        # Check if Kaggle dataset path exists and has model files
+        if kaggle_model_path.exists():
+            model_files = list(kaggle_model_path.glob("*.bin")) + list(kaggle_model_path.glob("*.safetensors"))
+            tokenizer_files = list(kaggle_model_path.glob("tokenizer*")) + list(kaggle_model_path.glob("vocab.txt"))
+            
+            if model_files and tokenizer_files:
+                tokenizer = AutoTokenizer.from_pretrained(str(kaggle_model_path.absolute()))
+                
+                # Try pytorch_model.bin first (more compatible)
+                if (kaggle_model_path / "pytorch_model.bin").exists():
+                    model = AutoModelForSequenceClassification.from_pretrained(str(kaggle_model_path.absolute()))
+                    print("Loaded from Kaggle dataset with pytorch_model.bin")
+                elif (kaggle_model_path / "model.safetensors").exists():
+                    # Remove the from_safetensors parameter - let transformers handle it automatically
+                    model = AutoModelForSequenceClassification.from_pretrained(str(kaggle_model_path.absolute()))
+                    print("Loaded from Kaggle dataset with model.safetensors")
+                else:
+                    raise FileNotFoundError("No model weight files in Kaggle dataset")
+                
+                # Set up device
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                model.to(device)
+                model.eval()
+                print(f"SciBERT loaded from Kaggle dataset on {device}")
+                
+                return model, tokenizer, device
+            else:
+                print("Kaggle dataset path exists but no model files found")
+        else:
+            print("Kaggle dataset path does not exist")
+            
+    except Exception as e:
+        print(f"Failed to load from Kaggle dataset: {e}")
+    
+    # Fallback: Try loading from local trained model
+    try:
+        if local_model_path and local_model_path.exists():
+            print(f"Trying local model path: {local_model_path}")
+            
+            model_files = list(local_model_path.glob("*.bin")) + list(local_model_path.glob("*.safetensors"))
+            tokenizer_files = list(local_model_path.glob("tokenizer*")) + list(local_model_path.glob("vocab.txt"))
+            
+            if model_files and tokenizer_files:
+                tokenizer = AutoTokenizer.from_pretrained(str(local_model_path.absolute()))
+                
+                if (local_model_path / "pytorch_model.bin").exists():
+                    model = AutoModelForSequenceClassification.from_pretrained(str(local_model_path.absolute()))
+                    print("Loaded from local path with pytorch_model.bin")
+                else:
+                    # Remove from_safetensors parameter here too
+                    model = AutoModelForSequenceClassification.from_pretrained(str(local_model_path.absolute()))
+                    print("Loaded from local path with safetensors")
+                
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                model.to(device)
+                model.eval()
+                print(f"SciBERT loaded from local path on {device}")
+                
+                return model, tokenizer, device
+    
+    except Exception as e:
+        print(f"Failed to load from local path: {e}")
+    
+    print("No SciBERT model available - using rule-based classification only")
+    return None, None, None
+
+def classify_with_scibert(context: str, model, tokenizer, device) -> str:
+    """Classify a dataset mention as Primary or Secondary using SciBERT"""
+    if not context or len(context.strip()) < 5:
+        return 'Secondary'
+    
+    inputs = tokenizer(
+        context,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+        max_length=128
+    ).to(device)
+    
+    with torch.no_grad():
+        outputs = model(**inputs)
+        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        pred = outputs.logits.argmax(-1).item()
+        confidence = probs[0][pred].item()
+    
+    # Confidence threshold
+    if confidence < 0.5:
+        return None  # Let rules decide
+    
+    return 'Primary' if pred == 1 else 'Secondary'
+
+def hybrid_classify(context: str, section_type: str, dataset_id: str, model=None, tokenizer=None, device=None) -> str:
+    """Hybrid classifier: rules first, then SciBERT for ambiguity"""
+    
+    # Rule 1: References section → Secondary
+    if section_type == 'references':
+        return 'Secondary'
+    
+    # Rule 2: Data availability sections → Primary
+    if any(pattern.search(context) for pattern in DATA_AVAILABILITY_PATTERNS):
+        return 'Primary'
+    
+    # Rule 3: Acknowledgments with Primary data language → Primary
+    if section_type == 'acknowledgments':
+        ctx_lower = context.lower()
+        # Use the predefined PRIMARY_INDICATORS
+        if any(indicator.lower() in ctx_lower for indicator in PRIMARY_INDICATORS):
+            return 'Primary'
+    
+    # Rule 4: Known secondary database patterns → Secondary
+    if any(pat in dataset_id.upper() for pat in ['PDB:', 'HGNC:', 'GSE', 'E-GEOD']):
+        return 'Secondary'
+    
+    # Rule 5: Use the predefined keyword lists for context analysis
+    ctx_lower = context.lower()
+    
+    # Check for Primary indicators
+    for indicator in PRIMARY_INDICATORS:
+        if indicator.lower() in ctx_lower:
+            return 'Primary'
+    
+    # Check for Secondary indicators
+    for indicator in SECONDARY_INDICATORS:
+        if indicator.lower() in ctx_lower:
+            return 'Secondary'
+    
+    # Rule 6: Use SciBERT for remaining ambiguous cases
+    if model is not None and tokenizer is not None and device is not None:
+        scibert_pred = classify_with_scibert(context, model, tokenizer, device)
+        if scibert_pred is not None:
+            return scibert_pred
+
+    # If it's an accession number and we're not sure, default to Secondary
+    # rather than filtering out completely
+    if re.match(r'^[A-Z]+\d+', dataset_id) and section_type != 'references':
+        return 'Secondary'  # Keep it but classify as Secondary    
+    
+    # Final fallback
+    return 'Secondary'
+
+print("ML training and inference functions defined")
