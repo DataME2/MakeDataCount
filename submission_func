@@ -1,0 +1,239 @@
+# ================================================================================
+# FINAL SUBMISSION GENERATION
+# ================================================================================
+
+def generate_submission(candidate_df, output_path="/kaggle/working/submission.csv"):
+    import pandas as pd
+    import polars as pl
+
+    # 0) Guard: empty input
+    if candidate_df is None:
+        print("No candidates to submit.")
+        empty = pd.DataFrame(columns=["article_id", "dataset_id", "type"])
+        empty.to_csv(output_path, index=False, encoding="utf-8-sig")
+        return empty
+
+    # 1) Normalize to a Pandas DataFrame named df  (define df FIRST!)
+    if isinstance(candidate_df, pl.DataFrame):
+        n_input = candidate_df.height
+        df = candidate_df.to_pandas()
+    else:
+        df = candidate_df.copy()
+        n_input = len(df)
+
+    # 2) Ensure required columns exist
+    required = ["article_id", "dataset_id", "type"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"generate_submission: missing columns {missing} in candidate_df; got {list(df.columns)}")
+
+    # 3) Idempotent final normalization (NOW it's safe to use df)
+    df["dataset_id"] = df["dataset_id"].astype(str).apply(normalize_dataset_id)
+    df = df[df["dataset_id"].str.len() > 0]
+
+    # 4) Deduplicate
+    df = df.drop_duplicates(subset=["article_id", "dataset_id", "type"], keep="first")
+
+    # 5) Debug report (mirrors your STEP 5 style)
+    print("\n==================================================")
+    print("FINAL SUBMISSION DEBUG REPORT")
+    print("==================================================")
+    print(f"Input: {n_input} candidate entries")
+    print(f"After cleaning: {len(df)} entries")
+    print(f"Final submission: {len(df)} entries from {df['article_id'].nunique()} articles")
+
+    type_counts = df["type"].value_counts(dropna=False).to_dict()
+    print("\nType Distribution:")
+    for k in sorted(type_counts):
+        print(f"   {k}: {type_counts[k]}")
+
+    # 6) Write CSV (Excel-friendly encoding)
+    df = df[['article_id', 'dataset_id', 'type']]
+    df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    print(f"\nSubmission saved to: {output_path}\n")
+
+    return df
+
+
+def debug_lost_candidates(candidate_df, submission_df):
+    """Debug which candidates are being lost - FIXED VERSION"""
+    print("\n🔍 CANDIDATES LOST TO FINAL FILTER")
+    
+    # Create sets for comparison
+    candidate_set = set(zip(candidate_df['article_id'].to_list(), candidate_df['dataset_id'].to_list()))
+    submission_set = set(zip(submission_df['article_id'].to_list(), submission_df['dataset_id'].to_list()))
+    lost_set = candidate_set - submission_set
+    
+    print(f"Total lost: {len(lost_set)}")
+    
+    # Check what patterns these lost candidates match
+    doi_pattern = re.compile(r'^https://doi\.org/10\.\d{4,9}/[^\s]+$')
+    fake_doi_pattern = re.compile(r'^https://doi\.org/[A-Z]+\d+')  # Fake DOIs like https://doi.org/SRR950082
+    accession_pattern = re.compile(r'^(?:GSE|GSM|GDS|SRR|SRX|SRP|SRA|DRR|DRX|DRP|ERR|ERX|ERP|PRJNA|PRJEB|PRJDB|E-MTAB|E-GEOD|PXD|EMPIAR|E-PROT|CAB|PF|IPR|EPI_ISL|CP|SAMN|SAMD|SAMEA)\d+[A-Z0-9._-]*$', re.IGNORECASE)
+    
+    lost_fake_dois = []
+    lost_real_dois = []
+    lost_accessions = []
+    lost_other = []
+    
+    for article_id, dataset_id in list(lost_set)[:100]:  # Sample first 100
+        if fake_doi_pattern.match(dataset_id):
+            lost_fake_dois.append(dataset_id)
+        elif doi_pattern.match(dataset_id):
+            lost_real_dois.append(dataset_id)
+        elif accession_pattern.match(dataset_id):
+            lost_accessions.append(dataset_id)
+        else:
+            lost_other.append(dataset_id)
+    
+    print(f"Lost fake DOIs: {len(lost_fake_dois)}")
+    print(f"Lost real DOIs: {len(lost_real_dois)}")
+    print(f"Lost accessions: {len(lost_accessions)}")
+    print(f"Lost other: {len(lost_other)}")
+    
+    print(f"\nSample lost fake DOIs (converted accessions):")
+    for doi in lost_fake_dois[:10]:
+        print(f"  - {doi}")
+    
+    print(f"\nSample lost real DOIs:")
+    for doi in lost_real_dois[:10]:
+        print(f"  - {doi}")
+
+def analyze_lost_candidates(candidate_df, submission_df):
+    """Detailed analysis of filtered candidates - FIXED VERSION"""
+    
+    # Create sets of (article_id, dataset_id) tuples
+    candidate_set = set(zip(
+        candidate_df['article_id'].to_list(),
+        candidate_df['dataset_id'].to_list()
+    ))
+    
+    submission_set = set(zip(
+        submission_df['article_id'].to_list(),
+        submission_df['dataset_id'].to_list()
+    ))
+    
+    lost_set = candidate_set - submission_set
+    
+    print(f"\n📊 LOST CANDIDATES ANALYSIS")
+    print(f"Total candidates: {len(candidate_set)}")
+    print(f"Final submission: {len(submission_set)}")
+    print(f"Lost: {len(lost_set)} ({100*len(lost_set)/len(candidate_set):.1f}%)")
+    
+    # Better classification of lost items
+    lost_fake_dois = []    # https://doi.org/SRR950082 (converted accessions)
+    lost_data_dois = []    # https://doi.org/10.5061/... (real data DOIs)
+    lost_journal_dois = [] # https://doi.org/10.1002/... (journal DOIs)
+    lost_accessions = []   # SRR950082 (proper accessions)
+    lost_other = []        # Everything else
+    
+    data_prefixes = ["10.5061", "10.5281", "10.6084", "10.17632", "10.24433",
+    "10.7910", "10.1594", "10.15468", "10.17882", "10.7937",
+    "10.3886", "10.3334", "10.4121", "10.5066", "10.5067",
+    "10.6073", "10.18150", "10.25377", "10.25387", "10.23642",
+    "10.24381", "10.22033", "10.6019", "10.15454", "10.7289",
+    "10.25349", "10.24341", "10.18738","10.5256", # F1000Research
+    "10.6075",  # CaltechDATA
+    "10.5441",  # Movebank
+    "10.13020", # Archaeology Data Service
+    "10.5683",  # DataverseNL
+    "10.26300", # DANS
+    "10.5072",  # Test DOIs (might be sandbox)
+    "10.2307",
+    "10.1046",
+    "10.1146",
+    "10.1175",]
+    journal_prefixes = ["10.1002", "10.1007", "10.1016", "10.1038", "10.1093", "10.1103", 
+    "10.1111", "10.1126", "10.1130", "10.1186", "10.1371", "10.1590", 
+    "10.1641", "10.1787", "10.3334", "10.4236", "10.5194", "10.7554"]
+    
+    for article_id, dataset_id in list(lost_set)[:600]:
+        if dataset_id.startswith("https://doi.org/"):
+            # Check if it's a fake DOI (converted accession)
+            if re.match(r'^https://doi\.org/[A-Z]+\d+', dataset_id):
+                lost_fake_dois.append(dataset_id)
+            else:
+                # Check if it's a data DOI or journal DOI
+                doi_prefix = re.search(r'10\.\d{4,9}', dataset_id)
+                if doi_prefix:
+                    prefix = doi_prefix.group()
+                    if prefix in data_prefixes:
+                        lost_data_dois.append(dataset_id)
+                    elif prefix in journal_prefixes:
+                        lost_journal_dois.append(dataset_id)
+                    else:
+                        lost_other.append(dataset_id)
+        elif re.match(r'^[A-Z]+\d+', dataset_id):
+            lost_accessions.append(dataset_id)
+        else:
+            lost_other.append(dataset_id)
+    
+    print(f"\nLost by type:")
+    print(f"  Fake DOIs (converted accessions): {len(lost_fake_dois)}")
+    print(f"  Data DOIs: {len(lost_data_dois)}")
+    print(f"  Journal DOIs: {len(lost_journal_dois)}")
+    print(f"  Pure accessions: {len(lost_accessions)}")
+    print(f"  Other: {len(lost_other)}")
+    
+    print(f"\nSample of lost fake DOIs (converted accessions):")
+    for doi in lost_fake_dois[:10]:
+        print(f"  - {doi}")
+    
+    print(f"\nSample of lost data DOIs:")
+    for doi in lost_data_dois[:10]:
+        print(f"  - {doi}")
+
+def analyze_doi_prefixes(candidate_df):
+    """Analyze what DOI prefixes appear in candidates"""
+    doi_prefixes = {}
+    
+    for dataset_id in candidate_df['dataset_id'].to_list():
+        if 'doi.org' in dataset_id:
+            prefix_match = re.search(r'10\.\d{4,9}', dataset_id)
+            if prefix_match:
+                prefix = prefix_match.group()
+                doi_prefixes[prefix] = doi_prefixes.get(prefix, 0) + 1
+    
+    print("\n📊 DOI PREFIX ANALYSIS")
+    print("Most common DOI prefixes in candidates:")
+    for prefix, count in sorted(doi_prefixes.items(), key=lambda x: x[1], reverse=True)[:20]:
+        known = "✓ DATA" if prefix in DATA_DOI_PREFIXES else "? UNKNOWN"
+        print(f"  {prefix}: {count} occurrences [{known}]")
+
+def pipeline_diagnostic(candidate_df):
+    """Diagnostic to understand the pipeline"""
+    print("\n🔍 PIPELINE DIAGNOSTIC")
+    
+    # Type distribution
+    type_counts = candidate_df['type'].value_counts()
+    print("\nType distribution in candidates:")
+    for row in type_counts.rows():
+        print(f"  {row[0]}: {row[1]}")
+    
+    # Sample some Primary classifications
+    primary_df = candidate_df.filter(pl.col('type') == 'Primary')
+    if len(primary_df) > 0:
+        print("\nSample Primary classifications:")
+        for row in primary_df.head(5).iter_rows(named=True):
+            print(f"  ID: {row['dataset_id'][:50]}...")
+            print(f"  Context: {row['context'][:100]}...")
+            print()
+
+
+def evaluate_f1_robust(submission_df, ground_truth_df):
+    import polars as pl
+    import pandas as pd
+
+    # normalize to Polars, since your eval uses .select/.group_by etc.
+    if isinstance(submission_df, pd.DataFrame):
+        sub_pl = pl.from_pandas(submission_df)
+    else:
+        sub_pl = submission_df
+    if isinstance(ground_truth_df, pd.DataFrame):
+        gt_pl = pl.from_pandas(ground_truth_df)
+    else:
+        gt_pl = ground_truth_df
+
+    return evaluate_f1(sub_pl, gt_pl)  # your existing eval using Polars
+    
+print("Submission and evaluation functions defined")
