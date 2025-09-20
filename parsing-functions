@@ -1,0 +1,56 @@
+# ================================================================================
+# DOCUMENT PARSING FUNCTIONS
+# ================================================================================
+
+def xml_kind(path: Path) -> str:
+    """Determine XML document type"""
+    try:
+        head = path.open('rb').read(2048).decode('utf8', 'ignore')
+        if 'www.tei-c.org/ns' in head: 
+            return 'tei'
+        if re.search(r'(NLM|TaxonX)//DTD', head): 
+            return 'jats'
+        if 'www.wiley.com/namespaces' in head: 
+            return 'wiley'
+        if 'BioC.dtd' in head: 
+            return 'bioc'
+    except: 
+        pass
+    return 'unknown'
+
+def xml2text(path: Path) -> str:
+    """Extract text from XML files"""
+    try:
+        kind = xml_kind(path)
+        root = etree.parse(str(path)).getroot()
+        
+        if kind in ('tei', 'bioc', 'unknown'):
+            txt = ' '.join(root.itertext())
+        elif kind == 'jats':
+            elems = root.xpath('//body//sec|//ref-list')
+            txt = ' '.join(' '.join(e.itertext()) for e in elems)
+        elif kind == 'wiley':
+            elems = root.xpath('//*[local-name()="body"]|//*[local-name()="refList"]')
+            txt = ' '.join(' '.join(e.itertext()) for e in elems)
+        else:
+            txt = ' '.join(root.itertext())
+        
+        # Fix DOI splits
+        txt = re.sub(r'10\.\d{4,9}/\s+', '10.', txt)
+        return txt
+    except Exception as e:
+        logger.error(f"Error parsing XML {path}: {e}")
+        return ""
+
+def pdf2text(path: Path) -> str:
+    """Extract text from PDF files"""
+    try:
+        doc = pymupdf.open(str(path))
+        text_parts = [page.get_text() for page in doc]
+        doc.close()
+        return '\n'.join(text_parts)
+    except Exception as e:
+        logger.error(f"Error parsing PDF {path}: {e}")
+        return ""
+
+print("Document parsing functions defined")
