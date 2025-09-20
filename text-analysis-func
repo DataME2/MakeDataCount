@@ -1,0 +1,140 @@
+# ================================================================================
+# TEXT ANALYSIS FUNCTIONS
+# ================================================================================
+
+def find_reference_start_enhanced(text: str) -> Optional[int]:
+    """Find where references section starts"""
+    lines = text.splitlines()
+    start_idx = int(len(lines) * 0.6)  # Start looking from 60% through document
+    
+    citation_density = []
+    window_size = 10
+    
+    for i in range(start_idx, len(lines) - window_size):
+        window_lines = lines[i:i + window_size]
+        citation_count = sum(1 for line in window_lines 
+                           if any(p.match(line.strip()) for p in CITATION_PATTERNS))
+        density = citation_count / window_size
+        citation_density.append((i, density))
+    
+    # Look for high density area
+    for i, d in citation_density:
+        if d >= 0.3: 
+            return i
+    
+    # Fallback: statistical threshold
+    if citation_density:
+        densities = [d for _, d in citation_density]
+        if max(densities) > 0.1:
+            threshold = np.mean(densities) + 2 * np.std(densities)
+            for i, d in citation_density:
+                if d >= threshold: 
+                    return i
+    
+    return None
+
+def split_text_and_references_enhanced(text: str) -> Tuple[str, str]:
+    """Split text into body and references sections"""
+    ref_start = find_reference_start_enhanced(text)
+    
+    if ref_start is not None:
+        lines = text.splitlines()
+        if ref_start < len(lines):
+            body = '\n'.join(lines[:ref_start])
+            references = '\n'.join(lines[ref_start:])
+        else:
+            body = text[:ref_start]
+            references = text[ref_start:]
+        
+        # Only split if body is substantial
+        if len(body.strip()) > 1000:
+            return body, references
+    
+    return text, ''
+
+def get_context_window_enhanced(text: str, match_start: int, match_end: int, window_size: int = 800) -> str:
+    """Extract context window around a match"""
+    start = max(0, match_start - window_size)
+    end = min(len(text), match_end + window_size)
+    context = text[start:end]
+    
+    # Try to get complete sentences
+    sentences = re.split(r'[.!?]\s+', context)
+    if len(sentences) > 1:
+        match_in_context = text[match_start:match_end]
+        relevant = [s for s in sentences 
+                   if match_in_context in s or len(s) > 50]
+        if relevant:
+            context = '. '.join(relevant)
+    
+    return context.strip()
+
+def detect_section_type(text: str, position: int) -> str:
+    """Detect what section of the paper we're in"""
+    text_before = text[:position].lower()
+    
+    if re.search(r'\b(?:acknowledgements?|acknowledgments?|funding)\b', text_before[-500:]):
+        return 'acknowledgments'
+    if re.search(r'\b(?:references?|bibliography|literature\s+cited)\b', text_before[-500:]):
+        return 'references'
+    
+    return 'body'
+
+# Journal DOI prefixes (from train_labels.csv analysis)
+JOURNAL_PREFIXES = [
+    "10.1002", "10.1007", "10.1016", "10.1038", "10.1093", "10.1103", 
+    "10.1111", "10.1126", "10.1130", "10.1186", "10.1371", "10.1590", 
+    "10.1641", "10.1787", "10.3334", "10.4236", "10.5194", "10.7554"
+]
+
+def is_journal_doi(doi: str) -> bool:
+    """Check if a DOI belongs to a journal article"""
+    prefix_match = re.search(r'10\.\d{4,9}', doi)
+    if prefix_match:
+        return prefix_match.group() in JOURNAL_PREFIXES
+    return False
+
+
+def is_false_positive_enhanced(match_text: str, context: str) -> bool:
+    # 1. Check for MISSING types FIRST
+    for pattern in MISSING_TYPE_PATTERNS:
+        if pattern.search(match_text) or pattern.search(context):
+            return True
+    
+    # 2. Check for false positives (p-values, etc.)
+    for pattern in FALSE_POSITIVE_PATTERNS:
+        if pattern.search(match_text):
+            if any(dap.search(context) for dap in DATA_AVAILABILITY_PATTERNS):
+                return False
+            return True
+    
+    # 3. Never filter accessions that are in train_labels.csv as Primary/Secondary
+    # Handle accessions - preserve as-is, no DOI conversion
+    known_accessions = [r'\b(GSE|GSM|GDS|SRR|SRX|SRP|SRA|DRR|DRX|DRP|ERR|ERX|ERP|PRJNA|PRJEB|PRJDB|E-MTAB|E-GEOD|PXD|EMPIAR|E-PROT|CAB|PF|IPR|EPI_ISL|CP|SAMN|SAMD|SAMEA)\d+[A-Z0-9._-]*\b',]
+    if any(acc in match_text.upper() for acc in known_accessions):
+        return False  # Let classification decide
+    
+    # 4. Protect data repository DOIs
+    doi_match = re.search(r'10\.\d{3,9}/', match_text, flags=re.IGNORECASE)
+    if doi_match:
+        prefix = doi_match.group().split('/')[0]
+        if prefix in DATA_DOI_PREFIXES:
+            return False
+    
+    return False
+
+    
+def validate_dryad_id(doi: str) -> bool:
+    """Validate Dryad DOI format"""
+    return bool(re.search(r'10\.5061/dryad\.[a-z0-9]+(?:\.[a-z0-9]+)*', doi, re.IGNORECASE))
+
+def validate_zenodo_id(doi: str) -> bool:
+    """Validate Zenodo DOI format"""
+    return bool(re.search(r'10\.5281/zenodo\.\d+', doi, re.IGNORECASE))
+
+def validate_figshare_id(doi: str) -> bool:
+    """Validate Figshare DOI format"""
+    return bool(re.search(r'10\.6084/m9\.figshare\.\d+', doi, re.IGNORECASE))
+
+
+print("Text analysis functions defined")
