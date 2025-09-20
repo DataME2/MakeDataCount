@@ -1,0 +1,20 @@
+# ================================================================================
+# EXECUTE MAIN PIPELINE
+# ================================================================================
+
+if __name__ == "__main__":
+    # Set random seed for reproducibility
+    set_seed(42)
+    
+    # Run main pipeline
+    try:
+        final_submission = main()
+        print("\nSUCCESS: Pipeline completed successfully!")
+        if final_submission is not None:
+            print(f"Final submission contains {len(final_submission)} entries")
+    except Exception as e:
+        print(f"\nERROR: Pipeline failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+
+print("\n=== SCRIPT COMPLETE ===")
