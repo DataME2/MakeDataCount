@@ -1,0 +1,64 @@
+# ================================================================================
+# BUILD CANDIDATE DATAFRAME
+# ================================================================================
+
+def build_candidate_dataframe(model=None, tokenizer=None, device=None) -> pl.DataFrame:
+    """Build dataframe of all candidates with detailed debugging."""
+    global DEBUG_COUNTS
+
+    records = []
+    # Reset counters
+    DEBUG_COUNTS = {k: 0 for k in DEBUG_COUNTS}
+
+    parsed_files = list(PARSE_DIR.glob('*.txt'))
+    if not parsed_files:
+        print("No parsed files found. Run document parsing first.")
+        return pl.DataFrame(schema={'article_id': pl.Utf8, 'dataset_id': pl.Utf8,
+                                    'context': pl.Utf8, 'type': pl.Utf8})
+
+    for txt_file in tqdm(parsed_files, desc="Extracting candidates"):
+        DEBUG_COUNTS['total_files'] += 1
+
+        # Derive article_id from filename
+        article_id = txt_file.stem
+        if article_id.endswith('_pdf') or article_id.endswith('_xml'):
+            article_id = article_id[:-4]
+
+        # Read & sanitize text
+        try:
+            with open(txt_file, 'r', encoding='utf-8') as f:
+                raw = f.read()
+        except Exception as e:
+            print(f"⚠️ Could not read {txt_file.name}: {e}")
+            continue
+
+        text = _sanitize_unicode(raw or "")
+
+        # Extract candidates
+        try:
+            candidates = extract_candidates_enhanced(
+                text=text,
+                article_id=article_id,
+                model=model,
+                tokenizer=tokenizer,
+                device=device,
+            )
+        except Exception as e:
+            print(f"⚠️ Candidate extraction failed for {article_id}: {e}")
+            continue
+
+        records.extend(candidates)
+
+    if not records:
+        return pl.DataFrame(schema={'article_id': pl.Utf8, 'dataset_id': pl.Utf8,
+                                    'context': pl.Utf8, 'type': pl.Utf8})
+
+    df = pl.DataFrame(records)
+
+    # Optional: drop exact dupes
+    if {'article_id', 'dataset_id', 'type'}.issubset(df.columns):
+        df = df.unique(subset=['article_id', 'dataset_id', 'type'], keep='first')
+
+    return df
+
+print("Candidate extraction functions defined")
